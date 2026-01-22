@@ -1,0 +1,279 @@
+**make a directory MWAS_Phylogenetic_tree**
+**make another folder MWAS_Phylo_ref inside MWAS_Phylogenetic_tree**
+
+*cp -v ALL_BINS_BLASTDB.nhr ALL_BINS_BLASTDB.nin ALL_BINS_BLASTDB.nsq  ALL_MAG_ORFs.faa ALL_MAG_ORFs.fna
+ ALL_MAG_ORFs.mmi orf_to_mag.tsv  MWAS_Phylo_ref/*
+
+**following code was used to make ALL_BINS_BLASTDB.nhr ALL_BINS_BLASTDB.nin ALL_BINS_BLASTDB.nsq**
+
+
+ ##makeblastdb \
+  -in /work/samodha/sachin/MWAS/Predicted_ORF/CoASSMBLYS/ALL_MAG_ORFs.fna \
+  -dbtype nucl \
+  -out /work/samodha/sachin/MWAS/Predicted_ORF/ref/ALL_BINS_BLASTDB##
+
+
+**create these two files MAG_traits_itol, seq_match_blast**
+
+**run this Blastt.slurm**
+
+#!/bin/bash
+#SBATCH --job-name=blast_traits
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
+#SBATCH --time=06:00:00
+#SBATCH --partition=batch
+#SBATCH --output=blast_traits.%j.out
+#SBATCH --error=blast_traits.%j.err
+
+set -euo pipefail
+
+module purge
+module load blast+ 2>/dev/null || module load blast 2>/dev/null || true
+
+command -v blastn >/dev/null 2>&1 || {
+  echo "ERROR: blastn not found. Try: module avail blast ; module load blast+"
+  exit 1
+}
+
+# ----- Working directory (your dataset location) -----
+WORKDIR="/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref"
+cd "$WORKDIR"
+
+# ----- BLAST DB prefix (these files must exist: .nin/.nsq/.nhr) -----
+DB="ALL_BINS_BLASTDB"
+
+# ----- Output directory -----
+OUTDIR="seq_match_blast"
+mkdir -p "$OUTDIR"
+
+THREADS="${SLURM_CPUS_PER_TASK:-16}"
+EVALUE="1e-20"
+
+# ----- Run BLAST for all 9 query files -----
+for q in top_*.fna; do
+  [[ -s "$q" ]] || { echo "Skipping missing/empty file: $q"; continue; }
+
+  base=$(basename "$q" .fna)
+  out="${OUTDIR}/${base}_vs_bins.tsv"
+
+  echo "Running BLAST: $q -> $out"
+
+  blastn \
+    -query "$q" \
+    -db "$DB" \
+    -out "$out" \
+    -outfmt "6 qseqid sseqid pident length evalue bitscore" \
+    -evalue "$EVALUE" \
+    -num_threads "$THREADS"
+done
+
+echo "Done. Outputs are in: $WORKDIR/$OUTDIR"
+
+
+**Check e-value = 0 for ALL 9 files at once, my path is**
+
+/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref/seq_match_blast
+
+for f in *.tsv; do
+  printf "%-30s %6d\n" "$f" "$(awk '$5==0 {c++} END{print c+0}' "$f")"
+done
+
+**make a filtred folder inside seq_match_blast folder and run the following code to filter the files based on identity >=90,length>=200 and e-value=0**
+
+for f in *.tsv; do
+  awk '$3>=90 && $4>=200 && $5==0' "$f" > "filtered/${f%.tsv}.filtered.tsv"
+done
+
+
+**Now go to the filtered folder and run the following code to make MAG_traits_itol folder inside MWAS_Phylogenetic_tree folder and extract the second column (subject sequence IDs) from each filtered file and make a separate text file for each file in MAG_traits_itol folder**
+
+for f in *.filtered.tsv; do
+  base=$(basename "$f" .filtered.tsv)
+  awk '{print $2}' "$f" | sort -u >  /work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MAG_traits_itol/${base}_ORF_hits.txt
+done
+
+**Finally run the following code to make the presence absence matrix for MAG traits, inside the MAG_traits_tables folder**
+
+python3 - <<'PY'
+from pathlib import Path
+import pandas as pd
+
+# ----- paths (FIXED for your dataset) -----
+BASE = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MAG_traits_itol")
+MAP  = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref/orf_to_mag.tsv")
+OUT  = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MAG_traits_tables")
+OUT.mkdir(parents=True, exist_ok=True)
+
+# ----- read ORF → MAG mapping -----
+m = pd.read_csv(MAP, sep="\t", header=None, names=["ORF","MAG"], dtype=str)
+
+all_mag_sets = {}
+all_mags = set()
+
+# ----- process each ORF hit list -----
+for f in BASE.glob("*_ORF_hits.txt"):
+    trait = f.name.replace("_vs_bins_ORF_hits.txt", "")
+    orfs = pd.read_csv(f, header=None, names=["ORF"], dtype=str)
+
+    merged = orfs.merge(m, on="ORF", how="left").dropna()
+    mags = set(merged["MAG"])
+
+    all_mag_sets[trait] = mags
+    all_mags.update(mags)
+
+# ----- build MAG-level presence/absence matrix -----
+all_mags = sorted(all_mags)
+df = pd.DataFrame({"MAG_ID": all_mags})
+
+for trait, mags in all_mag_sets.items():
+    df[trait] = df["MAG_ID"].isin(mags).astype(int)
+
+outfile = OUT / "MAG_traits_presence_matrix.tsv"
+df.to_csv(outfile, sep="\t", index=False)
+
+print("✅ Wrote:", outfile)
+print("MAGs:", df.shape[0])
+print("Traits:", df.shape[1] - 1)
+PY
+
+
+
+**Run this in filtred folder, and output This will generate two files MAG_diet_presence_matrix.tsv, MAG_trait_presence_matrix.tsv**
+
+
+python3 - <<'PY'
+from pathlib import Path
+import pandas as pd
+import re
+
+# ---- INPUTS ----
+MAP = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref/orf_to_mag.tsv")
+FILES = sorted(Path(".").glob("top_*_vs_bins.filtered.tsv"))
+
+# ---- load ORF -> MAG ----
+m = pd.read_csv(MAP, sep="\t", header=None, names=["ORF","MAG"], dtype=str)
+orf2mag = dict(zip(m["ORF"], m["MAG"]))
+
+# ---- helpers to parse filename ----
+def parse_name(fname: str):
+    # fname like: top_Conc_ADDMI_vs_bins.filtered.tsv
+    base = fname.replace("top_", "").replace("_vs_bins.filtered.tsv", "")
+    parts = base.split("_")
+    diet = parts[0]           # Conc / Forage / Full
+    trait = parts[1]          # ADDMI / ADG / FtG
+    return diet, trait
+
+# ---- collect MAG positives ----
+diet_hits = {"Conc": set(), "Forage": set(), "Full": set()}
+trait_hits = {"ADDMI": set(), "ADG": set(), "FtG": set()}
+all_mags = set()
+
+for f in FILES:
+    diet, trait = parse_name(f.name)
+
+    mags_this = set()
+    with f.open() as fin:
+        for line in fin:
+            if not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            orf = parts[1]  # column 2 = sseqid ORF in MAG DB
+            mag = orf2mag.get(orf)
+            if mag:
+                mags_this.add(mag)
+
+    # update sets
+    diet_hits[diet].update(mags_this)
+    trait_hits[trait].update(mags_this)
+    all_mags.update(mags_this)
+
+# ---- build DIET matrix ----
+mags_sorted = sorted(all_mags)
+diet_cols = ["Conc", "Forage", "Full"]
+diet_df = pd.DataFrame(0, index=mags_sorted, columns=diet_cols, dtype=int)
+for d in diet_cols:
+    diet_df.loc[list(diet_hits[d]), d] = 1
+diet_df.index.name = "MAG_ID"
+diet_out = Path("MAG_diet_presence_matrix.tsv")
+diet_df.to_csv(diet_out, sep="\t")
+
+# ---- build TRAIT matrix ----
+trait_cols = ["ADDMI", "ADG", "FtG"]
+trait_df = pd.DataFrame(0, index=mags_sorted, columns=trait_cols, dtype=int)
+for t in trait_cols:
+    trait_df.loc[list(trait_hits[t]), t] = 1
+trait_df.index.name = "MAG_ID"
+trait_out = Path("MAG_trait_presence_matrix.tsv")
+trait_df.to_csv(trait_out, sep="\t")
+
+print("Wrote:", diet_out, "  MAGs:", diet_df.shape[0], " Diet cols:", diet_df.shape[1])
+print("Wrote:", trait_out, " MAGs:", trait_df.shape[0], "Trait cols:", trait_df.shape[1])
+
+# quick counts
+print("\nDiet positives:")
+for d in diet_cols:
+    print(f"  {d}: {len(diet_hits[d])}")
+print("Trait positives:")
+for t in trait_cols:
+    print(f"  {t}: {len(trait_hits[t])}")
+PY
+
+
+
+**Make iTOL “binary ring” files (Diet ring)**
+
+python3 - <<'PY'
+import pandas as pd
+
+df = pd.read_csv("MAG_diet_presence_matrix.tsv", sep="\t", dtype={"MAG_ID":str})
+df = df.set_index("MAG_ID")
+
+out = "itol_diet_binary.txt"
+with open(out,"w") as f:
+    f.write("DATASET_BINARY\n")
+    f.write("SEPARATOR\tTAB\n")
+    f.write("DATASET_LABEL\tDiet\n")
+    f.write("COLOR\t#000000\n")
+    f.write("FIELD_LABELS\tConc\tForage\tFull\n")
+    f.write("FIELD_COLORS\t#1f77b4\t#2ca02c\t#ff7f0e\n")
+    f.write("FIELD_SHAPES\t1\t1\t1\n")
+    f.write("SHOW_INTERNAL\t0\n")
+    f.write("DATA\n")
+    for mag, row in df.iterrows():
+        f.write(f"{mag}\t{int(row['Conc'])}\t{int(row['Forage'])}\t{int(row['Full'])}\n")
+
+print("Wrote:", out)
+PY
+
+
+
+**Trait ring file (ADDMI / ADG / FtG)**
+
+python3 - <<'PY'
+import pandas as pd
+
+df = pd.read_csv("MAG_trait_presence_matrix.tsv", sep="\t", dtype={"MAG_ID":str})
+df = df.set_index("MAG_ID")
+
+out = "itol_trait_binary.txt"
+with open(out,"w") as f:
+    f.write("DATASET_BINARY\n")
+    f.write("SEPARATOR\tTAB\n")
+    f.write("DATASET_LABEL\tTraits\n")
+    f.write("COLOR\t#000000\n")
+    f.write("FIELD_LABELS\tADDMI\tADG\tFtG\n")
+    f.write("FIELD_COLORS\t#d62728\t#9467bd\t#8c564b\n")
+    f.write("FIELD_SHAPES\t1\t1\t1\n")
+    f.write("SHOW_INTERNAL\t0\n")
+    f.write("DATA\n")
+    for mag, row in df.iterrows():
+        f.write(f"{mag}\t{int(row['ADDMI'])}\t{int(row['ADG'])}\t{int(row['FtG'])}\n")
+
+print("Wrote:", out)
+PY
+
+
+

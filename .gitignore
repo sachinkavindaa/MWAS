@@ -1,0 +1,13 @@
+.DS_Store
+.Rhistory
+*.fa
+*.fna
+*.faa
+*.fastq*
+*.bam
+*.sam
+*.zip
+*.xlsx
+*.pptx
+*.pdf
+Bins/
