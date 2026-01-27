@@ -1,0 +1,313 @@
+01/22/26
+
+This update was given by after sending result_5 pptx. 
+
+Today had a meeting with Dr samodha, and he mentioned first i have to look at the dataset. then i first extracted the all the ORF_ID from recently given .fna file (starting from top)
+using follwoing syntax. 
+
+
+this is the path, /work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref/seq_match_blast
+
+#############################################
+
+for f in *.fna; do
+  grep "^>" "$f" | sed 's/^>//' | awk '{print $1}'
+done > ALL_ORF_IDs.csv
+
+##############################################
+
+
+then after that it was created ALL_ORF_IDs.csv file in that folder. After that, those ORF_ID were VOLOOKUP with master data sheet. 
+After checking the values, i realsied all the vlaues from master dataset and given .fna files thier ORF_ID are simillir. 
+
+Then i have to conisder the threhold of what i ahve been using for filter the MAGS. Especicly instead of using 200bp i have to use the fraction
+of itself. 
+
+for this i used the follwoing code to get the mean identity, mean alignment length and mean bit score for each bin.
+
+#############################################
+for f in *_vs_bins.tsv; do
+  awk -v F="$f" '
+  { id+=$3; len+=$4; bit+=$6; n++ }
+  END{
+    printf "%s\tmean_id=%.2f\tmean_len=%.1f\tmean_bits=%.1f\n",
+           F, id/n, len/n, bit/n
+  }' "$f"
+done > BLAST_summary.tsv
+
+##############################################
+
+The out put is like below.
+
+top_Conc_ADDMI_vs_bins.tsv	mean_id=88.85	mean_len=1135.7	mean_bits=1400.8
+top_Conc_ADG_vs_bins.tsv	mean_id=88.26	mean_len=974.8	mean_bits=1327.4
+top_Conc_FtG_vs_bins.tsv	mean_id=86.96	mean_len=1271.6	mean_bits=1963.8
+top_Forage_ADDMI_vs_bins.tsv	mean_id=82.11	mean_len=848.9	mean_bits=799.0
+top_Forage_ADG_vs_bins.tsv	mean_id=84.22	mean_len=1202.3	mean_bits=1279.7
+top_Forage_FtG_vs_bins.tsv	mean_id=78.16	mean_len=1001.2	mean_bits=539.7
+top_Full_ADDMI_vs_bins.tsv	mean_id=86.68	mean_len=1076.3	mean_bits=1329.5
+top_Full_ADG_vs_bins.tsv	mean_id=90.93	mean_len=1084.1	mean_bits=1556.9
+top_Full_FtG_vs_bins.tsv	mean_id=77.79	mean_len=894.9	mean_bits=567.5
+
+
+23/01/26
+
+i run again Blastt.slurm file with new thershold values. i changed it EVALUE to 1e-5 and also changed and add qlen and slen filter to 0.5 fraction.
+New files are saved in the same folder with the name "seq_match_blast_qlen"
+
+resultts are below
+
+top_Conc_ADDMI_vs_bins.tsv      mean_id=88.41   mean_len=989.6  mean_bits=1662.8
+top_Conc_ADG_vs_bins.tsv        mean_id=87.02   mean_len=886.8  mean_bits=1646.7
+top_Conc_FtG_vs_bins.tsv        mean_id=87.46   mean_len=1135.9 mean_bits=2403.1
+top_Forage_ADDMI_vs_bins.tsv    mean_id=81.76   mean_len=755.5  mean_bits=1945.0
+top_Forage_ADG_vs_bins.tsv      mean_id=83.62   mean_len=1097.5 mean_bits=1844.5
+top_Forage_FtG_vs_bins.tsv      mean_id=79.47   mean_len=815.2  mean_bits=2420.6
+top_Full_ADDMI_vs_bins.tsv      mean_id=86.25   mean_len=959.6  mean_bits=1721.9
+top_Full_ADG_vs_bins.tsv        mean_id=87.41   mean_len=854.6  mean_bits=1422.8
+top_Full_FtG_vs_bins.tsv        mean_id=77.68   mean_len=787.9  mean_bits=2276.0
+
+i run the following code to filter the files based on the new thershold values.
+
+mkdir -p filtered_sensitive
+
+for f in *.tsv; do
+  awk 'NR>1 && $5>0 && $7<=1e-10 && ($4/$5)>=0.35' "$f" \
+    > "filtered_sensitive/${f%.tsv}.sensitive.tsv"
+done
+
+After that i run the following code to extract the ORF_ID form those filtered files for itol annotation. All the output files are saved 
+in Result_5 folder.
+
+OUT="/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/Results_5/MAG_traits_itol_R5/C7"
+mkdir -p "$OUT"
+
+for f in *.sensitive7.tsv; do
+  base=$(basename "$f" .sensitive7.tsv)
+  awk '{print $2}' "$f" | sort -u > "$OUT/${base}_ORF_hits.txt"
+done
+
+Then i used the following code to generate the MAG presence absence matrix for itol annotation.
+
+python3 - <<'PY'
+from pathlib import Path
+import pandas as pd
+
+# ----- paths (FIXED for your dataset) -----
+BASE = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/Results_5/MAG_traits_itol_R5/C7")
+MAP  = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref/orf_to_mag.tsv")
+OUT  = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/Results_5/MAG_traits_tables_R5/C7")
+OUT.mkdir(parents=True, exist_ok=True)
+
+# ----- read ORF → MAG mapping -----
+m = pd.read_csv(MAP, sep="\t", header=None, names=["ORF","MAG"], dtype=str)
+
+all_mag_sets = {}
+all_mags = set()
+
+# ----- process each ORF hit list -----
+for f in BASE.glob("*_ORF_hits.txt"):
+    trait = f.name.replace("_vs_bins_ORF_hits.txt", "")
+    orfs = pd.read_csv(f, header=None, names=["ORF"], dtype=str)
+
+    merged = orfs.merge(m, on="ORF", how="left").dropna()
+    mags = set(merged["MAG"])
+
+    all_mag_sets[trait] = mags
+    all_mags.update(mags)
+
+# ----- build MAG-level presence/absence matrix -----
+all_mags = sorted(all_mags)
+df = pd.DataFrame({"MAG_ID": all_mags})
+
+for trait, mags in all_mag_sets.items():
+    df[trait] = df["MAG_ID"].isin(mags).astype(int)
+
+outfile = OUT / "MAG_traits_presence_matrix.tsv"
+df.to_csv(outfile, sep="\t", index=False)
+
+print("✅ Wrote:", outfile)
+print("MAGs:", df.shape[0])
+print("Traits:", df.shape[1] - 1)
+PY
+
+
+i run this code in the same folder where all the filtered_sensitive files are saved to generate the MAG diet and trait presence absence matrix.
+
+python3 - <<'PY'
+from pathlib import Path
+import pandas as pd
+import re
+
+# ---- INPUTS ----
+MAP = Path("/work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref/orf_to_mag.tsv")
+FILES = sorted(Path(".").glob("top_*_vs_bins.sensitive7.tsv"))
+
+# ---- load ORF -> MAG ----
+m = pd.read_csv(MAP, sep="\t", header=None, names=["ORF","MAG"], dtype=str)
+orf2mag = dict(zip(m["ORF"], m["MAG"]))
+
+# ---- helpers to parse filename ----
+def parse_name(fname: str):
+    # fname like: top_Conc_ADDMI_vs_bins.filtered.tsv
+    base = fname.replace("top_", "").replace("_vs_bins.sensitive7.tsv", "")
+    parts = base.split("_")
+    diet = parts[0]           # Conc / Forage / Full
+    trait = parts[1]          # ADDMI / ADG / FtG
+    return diet, trait
+
+# ---- collect MAG positives ----
+diet_hits = {"Conc": set(), "Forage": set(), "Full": set()}
+trait_hits = {"ADDMI": set(), "ADG": set(), "FtG": set()}
+all_mags = set()
+
+for f in FILES:
+    diet, trait = parse_name(f.name)
+
+    mags_this = set()
+    with f.open() as fin:
+        for line in fin:
+            if not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            orf = parts[1]  # column 2 = sseqid ORF in MAG DB
+            mag = orf2mag.get(orf)
+            if mag:
+                mags_this.add(mag)
+
+    # update sets
+    diet_hits[diet].update(mags_this)
+    trait_hits[trait].update(mags_this)
+    all_mags.update(mags_this)
+
+# ---- build DIET matrix ----
+mags_sorted = sorted(all_mags)
+diet_cols = ["Conc", "Forage", "Full"]
+diet_df = pd.DataFrame(0, index=mags_sorted, columns=diet_cols, dtype=int)
+for d in diet_cols:
+    diet_df.loc[list(diet_hits[d]), d] = 1
+diet_df.index.name = "MAG_ID"
+diet_out = Path("MAG_diet_presence_matrix.tsv")
+diet_df.to_csv(diet_out, sep="\t")
+
+# ---- build TRAIT matrix ----
+trait_cols = ["ADDMI", "ADG", "FtG"]
+trait_df = pd.DataFrame(0, index=mags_sorted, columns=trait_cols, dtype=int)
+for t in trait_cols:
+    trait_df.loc[list(trait_hits[t]), t] = 1
+trait_df.index.name = "MAG_ID"
+trait_out = Path("MAG_trait_presence_matrix.tsv")
+trait_df.to_csv(trait_out, sep="\t")
+
+print("Wrote:", diet_out, "  MAGs:", diet_df.shape[0], " Diet cols:", diet_df.shape[1])
+print("Wrote:", trait_out, " MAGs:", trait_df.shape[0], "Trait cols:", trait_df.shape[1])
+
+# quick counts
+print("\nDiet positives:")
+for d in diet_cols:
+    print(f"  {d}: {len(diet_hits[d])}")
+print("Trait positives:")
+for t in trait_cols:
+    print(f"  {t}: {len(trait_hits[t])}")
+PY
+
+
+output reesults are below, MAG_diet_presence_matrix.tsv   MAGs: 341  Diet cols: 3
+MAG_trait_presence_matrix.tsv  MAGs: 341 Trait cols: 3 
+
+Diet positives:
+  Conc: 181
+  Forage: 236
+  Full: 267
+Trait positives:
+  ADDMI: 198
+  ADG: 209
+  FtG: 209
+
+then i used the following code to generate the itol annotation file for diet binary matrix.
+
+
+python3 - <<'PY'
+import pandas as pd
+
+df = pd.read_csv("MAG_diet_presence_matrix.tsv", sep="\t", dtype={"MAG_ID":str})
+df = df.set_index("MAG_ID")
+
+out = "itol_diet_binary.txt"
+with open(out,"w") as f:
+    f.write("DATASET_BINARY\n")
+    f.write("SEPARATOR\tTAB\n")
+    f.write("DATASET_LABEL\tDiet\n")
+    f.write("COLOR\t#000000\n")
+    f.write("FIELD_LABELS\tConc\tForage\tFull\n")
+    f.write("FIELD_COLORS\t#1f77b4\t#2ca02c\t#ff7f0e\n")
+    f.write("FIELD_SHAPES\t1\t1\t1\n")
+    f.write("SHOW_INTERNAL\t0\n")
+    f.write("DATA\n")
+    for mag, row in df.iterrows():
+        f.write(f"{mag}\t{int(row['Conc'])}\t{int(row['Forage'])}\t{int(row['Full'])}\n")
+
+print("Wrote:", out)
+PY
+
+i run this code in the same folder where all the filtered_sensitive files are saved to generate the MAG diet and trait presence absence matrix.
+
+
+python3 - <<'PY'
+import pandas as pd
+
+df = pd.read_csv("MAG_trait_presence_matrix.tsv", sep="\t", dtype={"MAG_ID":str})
+df = df.set_index("MAG_ID")
+
+out = "itol_trait_binary.txt"
+with open(out,"w") as f:
+    f.write("DATASET_BINARY\n")
+    f.write("SEPARATOR\tTAB\n")
+    f.write("DATASET_LABEL\tTraits\n")
+    f.write("COLOR\t#000000\n")
+    f.write("FIELD_LABELS\tADDMI\tADG\tFtG\n")
+    f.write("FIELD_COLORS\t#d62728\t#9467bd\t#8c564b\n")
+    f.write("FIELD_SHAPES\t1\t1\t1\n")
+    f.write("SHOW_INTERNAL\t0\n")
+    f.write("DATA\n")
+    for mag, row in df.iterrows():
+        f.write(f"{mag}\t{int(row['ADDMI'])}\t{int(row['ADG'])}\t{int(row['FtG'])}\n")
+
+print("Wrote:", out)
+PY
+
+
+
+
+#######################################
+ changed the evalue to 1e-10 and qlen and slen to 0.7 fraction and rerun the blastt.slurm file.
+
+mkdir -p filtered_sensitive7
+
+for f in *.tsv; do
+  awk 'NR>1 && $5>0 && $7<=1e-10 && ($4/$5)>=0.7' "$f" \
+    > "filtered_sensitive/${f%.tsv}.sensitive7.tsv"
+done
+
+These are the new results after changing the thershold values.
+
+Wrote: MAG_diet_presence_matrix.tsv   MAGs: 275  Diet cols: 3
+Wrote: MAG_trait_presence_matrix.tsv  MAGs: 275 Trait cols: 3
+Diet positives:
+  Conc: 143
+  Forage: 174
+  Full: 192
+Trait positives:
+  ADDMI: 165
+  ADG: 164
+  FtG: 137
+[
+These are the finla results 
+
+Summary of results
+Thresholds	MAGs	Conc	Forage	Full	ADDMI	ADG	FtG
+≥35% coverage	341	181	236	267	198	209	209
+≥70% coverage	275	143	174	192	165	164	137
+
