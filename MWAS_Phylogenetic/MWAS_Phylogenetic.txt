@@ -1,4 +1,4 @@
-**make a directory MWAS_Phylogenetic_tree**
+**make a directory MWAS_Phylogenetic_tree****
 **make another folder MWAS_Phylo_ref inside MWAS_Phylogenetic_tree**
 
 *cp -v ALL_BINS_BLASTDB.nhr ALL_BINS_BLASTDB.nin ALL_BINS_BLASTDB.nsq  ALL_MAG_ORFs.faa ALL_MAG_ORFs.fna
