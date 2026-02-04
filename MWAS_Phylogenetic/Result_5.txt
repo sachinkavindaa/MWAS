@@ -311,3 +311,5 @@ Thresholds	MAGs	Conc	Forage	Full	ADDMI	ADG	FtG
 ≥35% coverage	341	181	236	267	198	209	209
 ≥70% coverage	275	143	174	192	165	164	137
 
+
+#####
