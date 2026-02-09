@@ -14,7 +14,7 @@ for f in *.fna; do
   grep "^>" "$f" | sed 's/^>//' | awk '{print $1}'
 done > ALL_ORF_IDs.csv
 
-####################################################
+#####################################################
 
 
 then after that it was created ALL_ORF_IDs.csv file in that folder. After that, those ORF_ID were VOLOOKUP with master data sheet. 
