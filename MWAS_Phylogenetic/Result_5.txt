@@ -281,7 +281,7 @@ PY
 
 
 
-#######################################
+##########################################
  changed the evalue to 1e-10 and qlen and slen to 0.7 fraction and rerun the blastt.slurm file.
 
 mkdir -p filtered_sensitive7
