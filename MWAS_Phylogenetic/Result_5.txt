@@ -8,7 +8,7 @@ using follwoing syntax.
 
 this is the path, /work/samodha/sachin/MWAS/MWAS_Phylogenetic_tree/MWAS_Phylo_ref/seq_match_blast
 
-####################################################
+#####################################################
 
 for f in *.fna; do
   grep "^>" "$f" | sed 's/^>//' | awk '{print $1}'
